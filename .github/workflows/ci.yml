@@ -1,34 +1,126 @@
-﻿name: Déploiement Docker SIMPLE
+﻿name: Pipeline CI/CD Complet
 
 on:
   push:
     branches: [main]
 
 jobs:
-  build:
+  # 1. TESTS
+  tests:
     runs-on: ubuntu-latest
-    
     steps:
-      # Étape 1: Récupère le code
-      - name: Checkout
+      - name: Checkout du code
         uses: actions/checkout@v3
-      
-      # Étape 2: Construit l'image Docker
-      - name: Build Docker image
+
+      - name: Configuration Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Installation des dépendances
         run: |
-          docker build -t mon-app .
-          echo "✅ Image Docker construite avec succès !"
-      
-      # Étape 3: Test
-      - name: Run tests
+          pip install -r requirements.txt
+          echo "Dépendances installées avec succès"
+
+      - name: Exécution des tests
         run: |
-          echo "🎉 FÉLICITATIONS !"
-          echo "Ton pipeline CI/CD marche !"
-          echo "Image Docker créée avec succès."
+          if [ -f "pytest.ini" ] || [ -d "tests" ]; then
+            python -m pytest tests/ -v
+          else
+            echo "Aucun test trouvé, étape ignorée"
+          fi
+
+  # 2. CONSTRUCTION ET PUBLICATION DOCKER
+  build-and-push:
+    needs: tests
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      
+    steps:
+      - name: Checkout du code
+        uses: actions/checkout@v3
+
+      - name: Configuration Docker Buildx
+        uses: docker/setup-buildx-action@v2
+
+      - name: Connexion à GitHub Container Registry
+        uses: docker/login-action@v2
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Construction et publication de l'image
+        uses: docker/build-push-action@v4
+        with:
+          context: .
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/flask-app:latest
+            ghcr.io/${{ github.repository_owner }}/flask-app:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Confirmation de publication
+        run: |
+          echo "✅ Image Docker publiée avec succès"
+          echo "📦 Registry: ghcr.io"
+          echo "🏷️ Tags:"
+          echo "  - ghcr.io/${{ github.repository_owner }}/flask-app:latest"
+          echo "  - ghcr.io/${{ github.repository_owner }}/flask-app:${{ github.sha }}"
+
+  # 3. NOTIFICATION DE SUCCÈS
+  notify-success:
+    needs: [tests, build-and-push]
+    if: success()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Rapport de succès
+        run: |
+          echo "=================================================="
+          echo "🚀 PIPELINE CI/CD TERMINÉ AVEC SUCCÈS"
+          echo "=================================================="
+          echo "📊 Résumé:"
+          echo "  ✅ Tests exécutés et validés"
+          echo "  ✅ Image Docker construite et publiée"
+          echo "  📍 Registry: GitHub Container Registry"
+          echo ""
+          echo "🔗 Liens utiles:"
+          echo "  - Image Docker: https://ghcr.io/${{ github.repository_owner }}/flask-app"
+          echo "  - Actions: https://github.com/${{ github.repository }}/actions"
+          echo ""
+          echo "📝 Informations:"
+          echo "  - Commit: ${{ github.sha }}"
+          echo "  - Auteur: ${{ github.actor }}"
+          echo "  - Répertoire: ${{ github.repository }}"
+          echo "=================================================="
+
+  # 4. NOTIFICATION D'ÉCHEC
+  notify-failure:
+    if: failure()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Rapport d'échec
+        run: |
+          echo "❌❌❌ ÉCHEC DU PIPELINE CI/CD ❌❌❌"
+          echo "=================================================="
+          echo "🔄 Détails:"
+          echo "  - Commit: ${{ github.sha }}"
+          echo "  - Répertoire: ${{ github.repository }}"
+          echo "  - Branch: ${{ github.ref }}"
+          echo "  - Déclenché par: ${{ github.actor }}"
+          echo ""
+          echo "🔍 Actions à prendre:"
+          echo "  1. Vérifier les logs GitHub Actions"
+          echo "  2. Tester localement"
+          echo "  3. Corriger les erreurs"
+          echo ""
+          echo "⚠️ Statut des jobs:"
+          echo "  - tests: ${{ needs.tests.result }}"
+          echo "  - build-and-push: ${{ needs.build-and-push.result }}"
+          echo "=================================================="
           
-      # Étape 4: Notification (optionnelle)
-      - name: Success notification
-        run: |
-          echo "========================================"
-          echo "SUCCÈS COMPLET DU PIPELINE CI/CD !"
-          echo "========================================"
+      - name: Marquer l'échec
+        run: exit 1
